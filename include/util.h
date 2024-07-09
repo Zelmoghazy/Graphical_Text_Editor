@@ -3,6 +3,7 @@
 
 #include <SDL2/SDL_error.h>
 
+#include <corecrt.h>
 #include <stdio.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -30,6 +31,11 @@ typedef struct vec2f_t{
     float x;
     float y;
 }vec2f_t;
+
+typedef struct vec2_t{
+    size_t x;
+    size_t y;
+}vec2_t;
 
 typedef struct abuf {
   char *b;

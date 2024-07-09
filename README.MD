@@ -3,8 +3,6 @@
        width="100%" "/>
 </p>
 
-
-
 - [x]  Word wrapping 
 - [x]  Cursor snapping at line end 
 - [x]  Zoom in and out 

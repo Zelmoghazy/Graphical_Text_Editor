@@ -1,4 +1,11 @@
-#include "SDL2/SDL_rect.h"
+
+// To Silence warnings from external code
+#pragma GCC diagnostic push 
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+
 #include "SDL2/SDL_scancode.h"
 #include "SDL2/SDL_video.h"
 #include "external/include/SDL2/SDL_keycode.h"
@@ -15,6 +22,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#pragma GCC diagnostic pop
 
 #include <stdio.h>
 #include <assert.h>
@@ -67,11 +75,6 @@
     ((color) >> (8 * 2)) & 0xFF, \
     ((color) >> (8 * 3)) & 0xFF 
 
-/*
-    When choosing the data structure I quickly realized the need of representing each line
-    as we need to remember the ending position at each previous line
-*/
-
 typedef struct font_t{
     SDL_Renderer*    renderer;
     SDL_Texture*     font_texture;
@@ -83,7 +86,7 @@ typedef struct rendered_text_t{
     font_t *font;
     abuf *text;
     char ch;                    // Current character getting rendered.
-    vec2f_t pos;                // Rendering Position.
+    vec2_t pos;                // Rendering Position.
     SDL_Color color;            // Rendered text color.
     float scale;
 }rendered_text_t;
@@ -646,8 +649,8 @@ void render_n_text(rendered_text_t *text,size_t text_size)
 {
     set_text_mode(text);
 
-    vec2f_t origin   = text->pos;
-    vec2f_t next_pos = text->pos;
+    vec2_t origin   = text->pos;
+    vec2_t next_pos = text->pos;
 
     for(size_t i = 0; i < text_size; i++)
     {
@@ -697,7 +700,12 @@ void render_line_number(editor_t *editor, rendered_text_t *text)
     size_t y = 0;
 
     size_t idx = (editor->row_offset > 0) ? editor->row_offset-1:0;
-    size_t screen_start_row = (editor->line[idx].screen_row_end+1) + (editor->line[editor->row_offset].line_offset);
+    size_t screen_start_row;
+    if(editor->line[idx].screen_row_end == 0){
+        screen_start_row = (editor->line[editor->row_offset].line_offset);
+    }else{
+        screen_start_row = (editor->line[idx].screen_row_end+1) + (editor->line[editor->row_offset].line_offset);
+    }
     
     for(size_t i = 0; i < editor->screen_rows; i++)
     {
@@ -719,7 +727,8 @@ void render_line_number(editor_t *editor, rendered_text_t *text)
         i+= change;
         
         char number_str[21]; 
-        sprintf(number_str, "%llu", line);
+        // start from line 1
+        sprintf(number_str, "%llu", line+1);
 
         for (int j = 0; number_str[j] != '\0'; j++) 
         {
