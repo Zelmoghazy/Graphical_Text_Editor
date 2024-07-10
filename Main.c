@@ -98,6 +98,7 @@ typedef struct buffer_cursor_t{
 
 typedef struct line_t{
     size_t size;
+    size_t capacity;
     char *data;
     size_t screen_row_end;
     size_t line_offset;             // offset within line
@@ -125,6 +126,8 @@ size_t PAD = 3;
 
 
 void set_screen_dimensions(editor_t *editor , rendered_text_t *text);
+void insert_text_at(editor_t *editor, const char*text,size_t text_size);
+
 
 void init_editor(rendered_text_t *text, editor_t *editor)
 {
@@ -188,6 +191,7 @@ void editor_append_line(editor_t *editor, char *s, size_t len)
     }
     int row = editor->num_rows;
     editor->line[row].size = len;
+    editor->line[row].capacity = len;
     editor->line[row].data = malloc(len + 1);
     memcpy(editor->line[row].data, s, len);
     editor->line[row].data[len] = '\0';
@@ -496,13 +500,11 @@ void poll_events(rendered_text_t *text, editor_t *editor)
 
             case SDL_TEXTINPUT:{
                 size_t text_size = strlen(event.text.text);
-                const size_t free_space = MAX_SIZE - (text->text->len);
-                if(text_size > free_space){
-                    text_size = free_space;
+                insert_text_at(editor,event.text.text,text_size);
+                for(size_t i = 0; i < text_size; i++){
+                    move_cursor_right(editor);
                 }
-                buf_append(text->text, event.text.text, text_size);
-                (text->text->len) += text_size;
-                editor->cursor.x += text_size;
+                
                 }break;
 
             case SDL_KEYDOWN:{
@@ -713,6 +715,9 @@ void render_line_number(editor_t *editor, rendered_text_t *text)
         y= i;
         size_t current_row = screen_start_row+i;
         size_t line = get_line_from_row(editor, current_row);
+        if(editor->line[line].screen_row_end < current_row){
+            break;
+        }
         if(line == editor->current_line){
             text->color.r = 132;
             text->color.g = 132;
@@ -863,6 +868,25 @@ void render_cursor(editor_t *editor, rendered_text_t *text)
     log_error(SDL_RenderFillRect(text->font->renderer, &cursor));
 }
 
+void insert_text_at(editor_t *editor, const char*text, size_t text_size)
+{
+    size_t idx = get_index_in_line(editor);
+    size_t size = editor->line[editor->current_line].size;
+    size_t capacity = editor->line[editor->current_line].capacity;
+
+    if (idx < 0 || idx > size){
+        idx = editor->line[editor->current_line].size;
+    } 
+    if(size + text_size < capacity){
+        editor->line[editor->current_line].capacity*=2;
+        editor->line[editor->current_line].data = realloc(editor->line[editor->current_line].data, sizeof(char) * editor->line[editor->current_line].capacity);
+    }
+    memcpy(&editor->line[editor->current_line].data[idx+text_size],&editor->line[editor->current_line].data[idx],size-idx+1);
+
+    memcpy(&editor->line[editor->current_line].data[idx],text,text_size);
+    editor->line[editor->current_line].size+=text_size;
+
+}
 void init_font_image(font_t *font)
 {
     SDL_Surface *font_surface = surface_from_image(font->path);
