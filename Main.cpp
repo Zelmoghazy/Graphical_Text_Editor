@@ -472,6 +472,10 @@ void editor_zoom_out(editor_t *e, rendered_text_t *text)
 
 void text_buffer_backspace(editor_t *e)
 {
+    // if cursor.x = 1 
+    // append rest of line to previous line
+    // delete line , (memove dance)
+    // decrease num of rows
     size_t idx = get_index_in_line(e);
     size_t size = e->l[e->curr_l].size;
 
@@ -484,11 +488,11 @@ void text_buffer_backspace(editor_t *e)
     } 
 }
 
-editor_t editor_to_file(editor_t *e, const char* path)
+void editor_to_file(editor_t *e, const char* path)
 {
     FILE *file = (FILE *) check_ptr(fopen(path, "w"));
     for (size_t i=0 ; i<e->rows; i++){
-        fprintf(file, "%s",e->l[i].data);
+        fprintf(file, "%s\n",e->l[i].data);
     }
     fclose(file);
 }
@@ -531,8 +535,9 @@ void poll_events(rendered_text_t *text, editor_t *e)
                         move_cursor_left(e);
                         break;
                     case SDLK_RETURN:
-                        // TODO: create a new empty line
-                        // fill it with the rest line right to current cursor position
+                        // TODO: create a new empty line after current cursor (memove dance)
+                        // fill it with the rest of line right to current cursor position
+                        // move cursor down and set cursor.x = 0
                         break;
 
                     case SDLK_LEFT:
@@ -616,7 +621,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                 }
                 else if((keyboard_state_array[SDL_SCANCODE_LCTRL]) && (keyboard_state_array[SDL_SCANCODE_S]))
                 {
-                    editor_to_file(e, "test.txt");
+                    editor_to_file(e, "save_test.txt");
                 }
             }break;
         }

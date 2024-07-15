@@ -1,4 +1,4 @@
-#include "./include/util.h"
+#include "../include/util.h"
 
 
 void log_error(int error_code)
@@ -21,7 +21,7 @@ void* check_ptr (void *ptr)
 
 void buf_append(abuf *ab, const char *s, int len) 
 {
-    char *new_buf = realloc(ab->b, ab->len + len);
+    char *new_buf = (char *)realloc(ab->b, ab->len + len);
     if (new_buf == NULL) return;
     memcpy(&new_buf[ab->len], s, len);
     ab->b = new_buf;
@@ -39,7 +39,7 @@ ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
 
 	if (*buf == NULL || *bufsiz == 0) {
 		*bufsiz = BUFSIZ;
-		if ((*buf = malloc(*bufsiz)) == NULL)
+		if ((*buf = (char *)malloc(*bufsiz)) == NULL)
 			return -1;
 	}
 
@@ -61,7 +61,7 @@ ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
                     char *nbuf;
                     size_t nbufsiz = *bufsiz * 2;
                     ssize_t d = ptr - *buf;
-                    if ((nbuf = realloc(*buf, nbufsiz)) == NULL)
+                    if ((nbuf = (char*)realloc(*buf, nbufsiz)) == NULL)
                         return -1;
                     *buf = nbuf;
                     *bufsiz = nbufsiz;
@@ -81,7 +81,7 @@ ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
 			char *nbuf;
 			size_t nbufsiz = *bufsiz * 2;
 			ssize_t d = ptr - *buf;
-			if ((nbuf = realloc(*buf, nbufsiz)) == NULL)
+			if ((nbuf = (char *)realloc(*buf, nbufsiz)) == NULL)
 				return -1;
 			*buf = nbuf;
 			*bufsiz = nbufsiz;
