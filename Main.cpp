@@ -192,9 +192,9 @@ void editor_append_line(editor_t *e, char *s, size_t len)
         e->l_cap*=2;
         e->l = (line_t *)realloc(e->l, sizeof(line_t)* e->l_cap);
     }
-    int row = e->rows;
+    size_t row = e->rows;
     e->l[row].size = len;
-    e->l[row].cap = len;
+    e->l[row].cap = len+1;
     e->l[row].data = (char *)malloc(len + 1);
     memcpy(e->l[row].data, s, len);
     e->l[row].data[len] = '\0';
@@ -470,6 +470,28 @@ void editor_zoom_out(editor_t *e, rendered_text_t *text)
     }
 }
 
+void editor_delete_line(editor_t *e)
+{
+    if(e->curr_l > 0){
+        free(e->l[e->curr_l].data);
+        memmove(&e->l[e->curr_l],&e->l[e->curr_l+1],e->rows - e->curr_l + 1);
+        e->rows--;
+    }
+}
+
+void append_text_to(editor_t *e, const char* text, size_t text_size, size_t line)
+{
+    ZoneScoped;
+    size_t size     = e->l[line].size;
+    
+    while(size + text_size > e->l[line].cap){
+        e->l[line].cap*=2;
+        e->l[line].data = (char *)realloc(e->l[line].data, sizeof(char) * e->l[line].cap);
+    }
+    memcpy(&e->l[line].data[size], text, text_size+1);
+    e->l[line].size+=text_size;
+}
+
 void text_buffer_backspace(editor_t *e)
 {
     // if cursor.x = 1 
@@ -482,10 +504,13 @@ void text_buffer_backspace(editor_t *e)
     if (idx < 0 || idx > size){
         idx = e->l[e->curr_l].size;
     }
-    if(e->curs.x > 0 && size >0){
-        memmove(&e->l[e->curr_l].data[idx-1],&e->l[e->curr_l].data[idx],size-idx);
+    if(e->curs.x == 0 && idx == 0 && e->curr_l > 1){
+        append_text_to(e, e->l[e->curr_l].data + idx, size-idx,e->curr_l-1);
+        editor_delete_line(e);
+    }else if(e->curs.x > 0 && size > 0){
+        memmove(&e->l[e->curr_l].data[idx-1],&e->l[e->curr_l].data[idx],size-idx+1);
         e->l[e->curr_l].size-=1;
-    } 
+    }
 }
 
 void editor_to_file(editor_t *e, const char* path)
@@ -809,6 +834,7 @@ void render_line_number(editor_t *e, rendered_text_t *text)
     render_seperator(e, text);
 }
 
+
 // TODO : this does too much, it handles word wrapping and computing each line row end 
 // Find a way to seperate each functions
 void render_n_text_file(editor_t *e, rendered_text_t *text)
@@ -929,7 +955,7 @@ void insert_text_at(editor_t *e, const char*text, size_t text_size)
     if (idx < 0 || idx > size){
         idx = e->l[e->curr_l].size;
     } 
-    if(size + text_size < capacity){
+    while(size + text_size > capacity){
         e->l[e->curr_l].cap*=2;
         e->l[e->curr_l].data = (char *)realloc(e->l[e->curr_l].data, sizeof(char) * e->l[e->curr_l].cap);
     }
@@ -939,6 +965,7 @@ void insert_text_at(editor_t *e, const char*text, size_t text_size)
     e->l[e->curr_l].size+=text_size;
 
 }
+
 
 void init_font_image(font_t *font)
 {
