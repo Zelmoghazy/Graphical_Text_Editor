@@ -5,7 +5,7 @@ OPT=-O0
 DBG=-g -gdwarf-2
 WARNINGS=-Wall -Wextra -m64 -Wsign-conversion -Wconversion
 DEPFLAGS=-MP -MD
-DEF=-DTRACY_ENABLE
+# DEF=-DTRACY_ENABLE
 
 INCS=$(foreach DIR,$(INC_DIRS),-I$(DIR))
 LIBS=$(foreach DIR,$(LIB_DIRS),-L$(DIR))
@@ -16,7 +16,7 @@ CFLAGS=$(DBG) $(OPT) $(INCS) $(LIBS) $(WARNINGS) $(DEPFLAGS) $(DEF)
 INC_DIRS=. ./external/include/ ./include/
 LIB_DIRS=. ./external/lib/
 BUILD_DIR=build
-CODE_DIRS=. src external/tracy-0.10/public
+CODE_DIRS=. src #external/tracy-0.10/public
 VPATH=$(CODE_DIRS)
 
 SRC=$(foreach DIR,$(CODE_DIRS),$(wildcard $(DIR)/*.$(EXT)))
