@@ -3,6 +3,7 @@
        width="100%" "/>
 </p>
 
+- [x]  Text input 
 - [x]  Word wrapping 
 - [x]  Cursor snapping at line end 
 - [x]  Zoom in and out 
@@ -11,3 +12,4 @@
 - [x]  Page up and down 
 - [x]  Handle tabs using a preconfigured number of spaces 
 - [x]  Line numbers 
+- [x]  Backspace 
