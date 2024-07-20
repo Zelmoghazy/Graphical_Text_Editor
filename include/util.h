@@ -3,6 +3,7 @@
 
 #include <SDL2/SDL_error.h>
 
+#include <corecrt.h>
 #include <stdio.h>
 #include <assert.h>
 #include <stdbool.h>

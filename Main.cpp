@@ -104,12 +104,39 @@ typedef struct editor_t{
     size_t      pad;                     // padding to the left of the screen, where line number is.
 }editor_t;
 
+typedef struct marker_t{
+    size_t line;
+    size_t idx;
+}marker_t;
+
+typedef struct selection_t{
+    marker_t start;
+    marker_t end;
+}selection_t;
+
+typedef enum action_t{
+
+}action_t;
+
+typedef struct history_t{
+    char ch;
+    action_t action;
+    size_t line;
+    size_t idx;
+}history_t;
 
 /* Global Flags */
 bool running = true;
 bool resize  = true;
 bool rescale = true;
 bool render  = true;
+bool selection = false;
+
+// Animation
+float duration = 0.5f;
+Uint32 startTime ;
+
+selection_t slct = {};
 
 void set_screen_dimensions(editor_t *e , rendered_text_t *text);
 void insert_text_at(editor_t *e, const char*text,size_t text_size);
@@ -579,7 +606,8 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     move_cursor_right(e);
                 }
                 
-                }break;
+            }break;
+
 
             case SDL_KEYDOWN:{
                 switch(event.key.keysym.sym){
@@ -621,6 +649,16 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     case SDLK_END:{
                         e->curs.x = e->screen_cols;
                         snap_cursor(e);
+                    }break;
+
+                    case SDLK_LSHIFT:
+                    case SDLK_RSHIFT:
+                    {
+                        if(!selection){
+                            selection = true;
+                            slct.start.line = e->curr_l;
+                            slct.start.idx = get_index_in_line(e);
+                        }
                     }break;
 
                     default:
@@ -676,6 +714,23 @@ void poll_events(rendered_text_t *text, editor_t *e)
                 {
                     editor_to_file(e, "save_test.txt");
                 }
+            }break;
+
+            case SDL_KEYUP:{
+                switch(event.key.keysym.sym){
+                    case SDLK_RSHIFT:
+                    case SDLK_LSHIFT:
+                    if(selection){
+                        selection = false;
+                        slct.end.line = e->curr_l;
+                        slct.end.idx = get_index_in_line(e);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                    
+                
             }break;
         }
     }
@@ -779,6 +834,21 @@ void render_n_string(editor_t *e,rendered_text_t *text,char *string, size_t text
                 set_text_mode(text);
             }
         }
+        if(text->ch == '<' || text->ch == '>'){
+            if(highlight == true && text->ch == '>'){
+                text->color.r=255;
+                text->color.g=255;
+                text->color.b=255;
+                set_text_mode(text);
+                highlight = false;
+            }else if (text->ch == '<'){
+                highlight = true;
+                text->color.r=199;
+                text->color.g=146;
+                text->color.b=234;
+                set_text_mode(text);
+            }
+        }
         render_char(e,text);
         text->pos.x++;
     }
@@ -803,6 +873,87 @@ void render_seperator(editor_t *e, rendered_text_t *text)
     log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
 }
 
+void render_selection(editor_t *e, rendered_text_t *text)
+{
+
+    if(slct.start.line == slct.end.line && slct.start.idx == slct.end.idx){
+        return;
+    }
+
+    if(slct.start.line > slct.end.line){
+        size_t tmp = slct.start.line;
+        slct.start.line = slct.end.line;
+        slct.end.line = tmp;
+
+        tmp = slct.start.idx;
+        slct.start.idx = slct.end.idx;
+        slct.end.idx = tmp;
+    }
+
+    size_t x = 0;
+    size_t y = 0;
+
+    size_t idx = (e->l_off > 0) ? e->l_off-1:0;
+    size_t screen_start_row;
+
+    if(e->l[idx].end_row == 0){
+        screen_start_row = (e->l[e->l_off].row_off);
+    }else{
+        screen_start_row = (e->l[idx].end_row+1) + (e->l[e->l_off].row_off);
+    }
+    
+    for(size_t i = 0; i < e->screen_rows; i++)
+    {
+        x= 0;
+        y= i;
+        size_t current_row = screen_start_row+i;
+        size_t line = get_line_from_row(e, current_row);
+
+        if(e->l[line].end_row < current_row){
+            break;
+        }
+
+        if(slct.start.line < line){
+            break;
+        }
+
+        if(line == slct.start.line){
+            text->color.r = 132;
+            text->color.g = 132;
+            text->color.b = 132;
+        }else{
+            text->color.r = 66;
+            text->color.g = 66;
+            text->color.b = 66;
+        }
+        set_text_mode(text);
+        size_t change = e->l[line].end_row-current_row;
+        i+= change;
+        
+        char number_str[21]; 
+        // start from line 1
+        sprintf(number_str, "%llu", line+1);
+
+        for (size_t j = 0; number_str[j] != '\0'; j++) 
+        {
+            size_t index = number_str[j] - ASCII_LOW; // ascii to index
+
+            const SDL_Rect dst_rect = {
+                .x = (int) floorf(x++ * text->font->font_char_width * text->scale),
+                .y = (int) floorf(y * text->font->font_char_height * text->scale),
+                .w = (int) floorf(text->font->font_char_width * text->scale),
+                .h = (int) floorf(text->font->font_char_height * text->scale),
+            };
+            log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture, &(text->font->glyph_table[index]), &dst_rect));
+        }
+    }
+    text->color.r = 255;
+    text->color.g = 255;
+    text->color.b = 255;
+    set_text_mode(text);
+}
+
+
 void render_line_number(editor_t *e, rendered_text_t *text)
 {
     //ZoneScoped;
@@ -813,6 +964,7 @@ void render_line_number(editor_t *e, rendered_text_t *text)
 
     size_t idx = (e->l_off > 0) ? e->l_off-1:0;
     size_t screen_start_row;
+
     if(e->l[idx].end_row == 0){
         screen_start_row = (e->l[e->l_off].row_off);
     }else{
@@ -955,6 +1107,10 @@ void render_n_text_file(editor_t *e, rendered_text_t *text)
     }
 }
 
+float lerp(float a, float b, float t){ 
+    return a + t * (b - a);
+}
+
 void move_cursor_rect(editor_t *e, rendered_text_t *text)
 {
     size_t screen_row_start = (e->l_off > 0) ? (e->l[e->l_off-1].end_row + 1) : 0;
@@ -964,8 +1120,46 @@ void move_cursor_rect(editor_t *e, rendered_text_t *text)
     // cursor position on screen is cursor absolute position minus the offset
     size_t cursor_screen_pos = e->curs.y - (screen_row_start + e->l[e->l_off].row_off);
 
-    text->curs->x = (int) floorf(text->font->font_char_width * text->scale *  (e->curs.x + e->pad));  // x is same as we do text wrapping
-    text->curs->y = (int) floorf(text->font->font_char_height * text->scale * cursor_screen_pos);
+    text->curs->x = (int) floorf(text->font->font_char_width  * text->scale *  (float)(e->curs.x + e->pad));  // x is same as we do text wrapping
+    text->curs->y = (int) floorf(text->font->font_char_height * text->scale * (float)cursor_screen_pos);
+    text->curs->w = (int) floorf((text->font->font_char_width * text->scale) / 4);
+    text->curs->h = (int) floorf(text->font->font_char_height * text->scale);
+}
+
+void move_cursor_rect_animated(editor_t *e, rendered_text_t *text)
+{
+    static size_t prev_x = e->curs.x;
+    static size_t prev_y = e->curs.y;
+
+    if(prev_x != e->curs.x){
+        startTime = SDL_GetTicks();
+        prev_x = e->curs.x;
+    }
+    if(prev_y != e->curs.y){
+        startTime = SDL_GetTicks();
+        prev_y = e->curs.y;
+    }
+
+    Uint32 currentTime = SDL_GetTicks();
+    float elapsedTime = (currentTime - startTime) / 1000.0f;
+    float t = elapsedTime / duration;
+
+    // Clamp t to [0, 1]
+    if (t > 0.98f){ 
+        t = 1.0f;
+    }
+        
+
+    size_t screen_row_start = (e->l_off > 0) ? (e->l[e->l_off-1].end_row + 1) : 0;
+
+    assert(e->curs.y >= (screen_row_start + e->l[e->l_off].row_off));
+
+    // cursor position on screen is cursor absolute position minus the offset
+    size_t cursor_screen_pos = e->curs.y - (screen_row_start + e->l[e->l_off].row_off);
+
+
+    text->curs->x = (int) floorf(lerp(text->curs->x,text->font->font_char_width* text->scale*(float)(e->curs.x + e->pad),t));  // x is same as we do text wrapping
+    text->curs->y = (int) floorf(lerp(text->curs->y,text->font->font_char_height * text->scale * (float)cursor_screen_pos,t));
     text->curs->w = (int) floorf((text->font->font_char_width * text->scale) / 4);
     text->curs->h = (int) floorf(text->font->font_char_height * text->scale);
 }
@@ -973,7 +1167,6 @@ void move_cursor_rect(editor_t *e, rendered_text_t *text)
 void render_cursor(editor_t *e, rendered_text_t *text)
 {
     //ZoneScoped;
-
     move_cursor_rect(e, text);
     log_error(SDL_SetRenderDrawColor(text->font->renderer, 255,203,100,255));
     log_error(SDL_RenderFillRect(text->font->renderer, text->curs));
@@ -1198,6 +1391,8 @@ int main(int argv, char** args)
 
     init_editor(&text, &e);
     editor_open(&e, "./test.txt");
+
+    startTime = SDL_GetTicks();
     
     while(running)
     {
