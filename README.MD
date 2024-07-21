@@ -13,8 +13,8 @@
 - [x]  Handle tabs using a preconfigured number of spaces 
 - [x]  Line numbers 
 - [x]  Backspace 
-- []   Enter
-- []   Selection
-- []   Syntax Highlighting
-- []   Copy and Paste
-- []   Undo and Redo
+- [ ]   Enter
+- [ ]   Selection
+- [ ]   Syntax Highlighting
+- [ ]   Copy and Paste
+- [ ]   Undo and Redo
