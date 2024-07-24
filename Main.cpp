@@ -280,6 +280,21 @@ void editor_delete_line(editor_t *e)
     }
 }
 
+void editor_create_line(editor_t *e)
+{
+    e->l_num++;
+    // Expand lines array when we exceed capacity 
+    if(e->l_num >= e->l_cap){
+        e->l_cap*=2;
+        e->l = (line_t *)check_ptr(realloc(e->l,sizeof (line_t) * e->l_cap));
+    }
+    memmove(&e->l[e->curr_l+2],&e->l[e->curr_l+1],sizeof(line_t) * (e->l_num - e->curr_l+1));
+
+    // reset line 
+    e->l[e->curr_l].data[0] = '\0'; 
+    e->l[e->curr_l].size = 1; 
+}
+
 void editor_to_file(editor_t *e, const char* path)
 {
     FILE *file = (FILE *) check_ptr(fopen(path, "w"));
@@ -370,6 +385,19 @@ void text_buffer_backspace(editor_t *e)
         memmove(&e->l[e->curr_l].data[idx-1],&e->l[e->curr_l].data[idx],size-idx+1);
         e->l[e->curr_l].size-=1;
     }
+}
+
+void text_buffer_enter(editor_t *e)
+{
+    // current index in line
+    size_t idx = get_index_in_line(e);
+    // size of the entire line
+    size_t size = e->l[e->curr_l].size;
+
+    editor_create_line(e);
+    // append rest of line to the previous line
+    append_text_to(e, &e->l[e->curr_l].data[idx], size-idx, e->curr_l+1);
+    // delete current line
 }
 
 // Binary search to line from row
@@ -611,6 +639,15 @@ void poll_events(rendered_text_t *text, editor_t *e)
 
             case SDL_KEYDOWN:{
                 switch(event.key.keysym.sym){
+                    case SDLK_ESCAPE:
+                        if(selection){
+                            selection = false;
+                            slct.start.line = 0;
+                            slct.start.idx = 0;
+                            slct.end.line = 0;
+                            slct.end.idx = 0;
+                        }
+                        break;
                     case SDLK_BACKSPACE:
                         text_buffer_backspace(e);
                         move_cursor_left(e);
@@ -721,7 +758,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     case SDLK_RSHIFT:
                     case SDLK_LSHIFT:
                     if(selection){
-                        selection = false;
+                        // selection = false;
                         slct.end.line = e->curr_l;
                         slct.end.idx = get_index_in_line(e);
                         break;
@@ -875,11 +912,16 @@ void render_seperator(editor_t *e, rendered_text_t *text)
 
 void render_selection(editor_t *e, rendered_text_t *text)
 {
+    if (!selection || (slct.end.line == 0 && slct.end.idx == 0)){
+        return;
+    }
 
     if(slct.start.line == slct.end.line && slct.start.idx == slct.end.idx){
         return;
     }
 
+    // start line always smaller to make calculations easier
+    // as  you can select left or right
     if(slct.start.line > slct.end.line){
         size_t tmp = slct.start.line;
         slct.start.line = slct.end.line;
@@ -893,6 +935,11 @@ void render_selection(editor_t *e, rendered_text_t *text)
     size_t x = 0;
     size_t y = 0;
 
+    size_t rectx = 0;
+    size_t rectxend = 0;
+
+    size_t idx_in_line = 0;
+
     size_t idx = (e->l_off > 0) ? e->l_off-1:0;
     size_t screen_start_row;
 
@@ -901,56 +948,53 @@ void render_selection(editor_t *e, rendered_text_t *text)
     }else{
         screen_start_row = (e->l[idx].end_row+1) + (e->l[e->l_off].row_off);
     }
-    
+
+    if(get_line_from_row(e, screen_start_row) > slct.end.line){
+        return;
+    }
+
+    // iterate screen rows
     for(size_t i = 0; i < e->screen_rows; i++)
     {
         x= 0;
         y= i;
         size_t current_row = screen_start_row+i;
         size_t line = get_line_from_row(e, current_row);
+        size_t line_first_row =  (line > 0) ? e->l[line-1].end_row+1 : 0;
 
         if(e->l[line].end_row < current_row){
             break;
         }
 
-        if(slct.start.line < line){
-            break;
+        if(line < slct.start.line){
+            continue;
         }
 
-        if(line == slct.start.line){
-            text->color.r = 132;
-            text->color.g = 132;
-            text->color.b = 132;
-        }else{
-            text->color.r = 66;
-            text->color.g = 66;
-            text->color.b = 66;
-        }
-        set_text_mode(text);
-        size_t change = e->l[line].end_row-current_row;
-        i+= change;
-        
-        char number_str[21]; 
-        // start from line 1
-        sprintf(number_str, "%llu", line+1);
-
-        for (size_t j = 0; number_str[j] != '\0'; j++) 
+        if(line == slct.start.line && line == slct.end.line)
         {
-            size_t index = number_str[j] - ASCII_LOW; // ascii to index
-
+            if(current_row == line_first_row){
+                idx_in_line = 0;
+            }
+            for (size_t j = 0; j< e->screen_cols; j++) {
+                if(idx_in_line == slct.start.idx){
+                    rectx = x;
+                }else if (idx_in_line == slct.end.idx){
+                    rectxend = x;
+                }
+                idx_in_line++;
+                x++;
+            }
             const SDL_Rect dst_rect = {
-                .x = (int) floorf(x++ * text->font->font_char_width * text->scale),
+                .x = (int) floorf((rectx + e->pad) * text->font->font_char_width * text->scale),
                 .y = (int) floorf(y * text->font->font_char_height * text->scale),
-                .w = (int) floorf(text->font->font_char_width * text->scale),
+                .w = (int) floorf((rectxend-rectx) * text->font->font_char_width * text->scale),
                 .h = (int) floorf(text->font->font_char_height * text->scale),
             };
-            log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture, &(text->font->glyph_table[index]), &dst_rect));
+            log_error(SDL_SetRenderDrawColor(text->font->renderer, 76,88,99,255));
+            log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
         }
+
     }
-    text->color.r = 255;
-    text->color.g = 255;
-    text->color.b = 255;
-    set_text_mode(text);
 }
 
 
@@ -1348,6 +1392,8 @@ void init_sdl(SDL_Window **window, SDL_Renderer **renderer)
                                                         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE));
 
     *renderer = (SDL_Renderer *) check_ptr(SDL_CreateRenderer(*window,-1,SDL_RENDERER_ACCELERATED));
+
+    SDL_SetRenderDrawBlendMode(*renderer, SDL_BLENDMODE_BLEND);
 }
 
 int main(int argv, char** args)
@@ -1405,8 +1451,10 @@ int main(int argv, char** args)
 
         editor_scroll(&e);
 
+        render_selection(&e, &text);
         render_n_text_file(&e,&text);
         render_line_number(&e,&text);
+
         render_cursor(&e, &text);
 
         SDL_RenderPresent(renderer);
