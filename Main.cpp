@@ -2,6 +2,7 @@
 // To Silence warnings from external libraries
 #include "include/util.h"
 #include <corecrt.h>
+#include <immintrin.h>
 #pragma GCC diagnostic push 
 #pragma GCC diagnostic ignored "-Wall"
 #pragma GCC diagnostic ignored "-Wextra"
@@ -131,6 +132,7 @@ bool resize  = true;
 bool rescale = true;
 bool render  = true;
 bool selection = false;
+bool shift_press = false;
 
 // Animation
 float duration = 0.5f;
@@ -291,8 +293,14 @@ void editor_create_line(editor_t *e)
     memmove(&e->l[e->curr_l+2],&e->l[e->curr_l+1],sizeof(line_t) * (e->l_num - e->curr_l+1));
 
     // reset line 
-    e->l[e->curr_l].data[0] = '\0'; 
-    e->l[e->curr_l].size = 1; 
+    size_t len = e->l[e->curr_l].size;
+    // Populate line 
+    e->l[e->curr_l+1].size = 0;
+    e->l[e->curr_l+1].cap  = len+1;
+    e->l[e->curr_l+1].data = (char *)check_ptr(malloc(sizeof(*(e->l[e->curr_l+1].data))*e->l[e->curr_l+1].cap));
+    e->l[e->curr_l+1].data[0] = '\0';
+    e->l[e->curr_l+1].row_off=0;
+    e->l[e->curr_l+1].end_row=0;
 }
 
 void editor_to_file(editor_t *e, const char* path)
@@ -395,9 +403,12 @@ void text_buffer_enter(editor_t *e)
     size_t size = e->l[e->curr_l].size;
 
     editor_create_line(e);
-    // append rest of line to the previous line
+    // append rest of line to the next line
     append_text_to(e, &e->l[e->curr_l].data[idx], size-idx, e->curr_l+1);
     // delete current line
+    e->l[e->curr_l].size=idx;
+    e->l[e->curr_l].data[idx+1]='\0';
+
 }
 
 // Binary search to line from row
@@ -472,7 +483,6 @@ void editor_zoom_out(editor_t *e, rendered_text_t *text)
         }
     }
 }
-
 
 /* -----------------------  Cursor Movement------------------- */
 bool snap_cursor(editor_t *e)
@@ -603,7 +613,6 @@ void move_cursor_page_down(editor_t *e)
     }
 }
 
-
 /* ----------------  Events -------------------- */
 void poll_events(rendered_text_t *text, editor_t *e)
 {
@@ -656,14 +665,37 @@ void poll_events(rendered_text_t *text, editor_t *e)
                         // TODO: create a new empty line after current cursor (memove dance)
                         // fill it with the rest of line right to current cursor position
                         // move cursor down and set cursor.x = 0
+                        text_buffer_enter(e);
+                        move_cursor_down(e);
+                        e->curs.x = 0;
                         break;
 
                     case SDLK_LEFT:
                         move_cursor_left(e);
+                        if(shift_press){
+                            slct.end.line = e->curr_l;
+                            slct.end.idx = get_index_in_line(e);
+                        }else{
+                            selection = false;
+                            slct.start.line = 0;
+                            slct.start.idx = 0;
+                            slct.end.line = 0;
+                            slct.end.idx = 0;
+                        }
                         break;
 
                     case SDLK_RIGHT:
                         move_cursor_right(e);
+                        if(shift_press){
+                            slct.end.line = e->curr_l;
+                            slct.end.idx = get_index_in_line(e);
+                        }else{
+                            selection = false;
+                            slct.start.line = 0;
+                            slct.start.idx = 0;
+                            slct.end.line = 0;
+                            slct.end.idx = 0;
+                        }
                         break;
                     case SDLK_UP:
                         move_cursor_up(e);
@@ -693,6 +725,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     {
                         if(!selection){
                             selection = true;
+                            shift_press = true;
                             slct.start.line = e->curr_l;
                             slct.start.idx = get_index_in_line(e);
                         }
@@ -758,9 +791,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     case SDLK_RSHIFT:
                     case SDLK_LSHIFT:
                     if(selection){
-                        // selection = false;
-                        slct.end.line = e->curr_l;
-                        slct.end.idx = get_index_in_line(e);
+                        shift_press = false;
                         break;
                     }
                     default:
@@ -819,7 +850,7 @@ void render_char(editor_t *e, rendered_text_t *text)
     //ZoneScoped;
     if (text->ch < ASCII_LOW || text->ch > ASCII_HIGH){
         if(text->ch != '\n'){
-            DEBUG_PRT("Unknown character!");
+            DEBUG_PRT("Unknown character!\n");
             exit(1);
         }
     }
@@ -838,7 +869,6 @@ void render_char(editor_t *e, rendered_text_t *text)
     }
 }
 
-
 void render_n_string(editor_t *e,rendered_text_t *text,char *string, size_t text_size)
 {
     //ZoneScoped;
@@ -856,6 +886,21 @@ void render_n_string(editor_t *e,rendered_text_t *text,char *string, size_t text
                 set_text_mode(text);
             }
         }
+        // if(text->ch == '#'){
+        //     if(highlight == true){
+        //         text->color.r=255;
+        //         text->color.g=255;
+        //         text->color.b=255;
+        //         set_text_mode(text);
+        //         highlight = false;
+        //     }else{
+        //         highlight = true;
+        //         text->color.r=137;
+        //         text->color.g=221;
+        //         text->color.b=255;
+        //         set_text_mode(text);
+        //     }
+        // }
         if(text->ch == '"'){
             if(highlight == true){
                 text->color.r=255;
@@ -936,7 +981,7 @@ void render_selection(editor_t *e, rendered_text_t *text)
     size_t y = 0;
 
     size_t rectx = 0;
-    size_t rectxend = 0;
+    size_t rectxend = e->screen_cols;
 
     size_t idx_in_line = 0;
 
@@ -962,27 +1007,83 @@ void render_selection(editor_t *e, rendered_text_t *text)
         size_t line = get_line_from_row(e, current_row);
         size_t line_first_row =  (line > 0) ? e->l[line-1].end_row+1 : 0;
 
-        if(e->l[line].end_row < current_row){
+        rectx = 0;
+        rectxend = e->l[line].size;
+
+        if(e->l[line].end_row < current_row)
+        {
             break;
         }
 
-        if(line < slct.start.line){
+        if(line > slct.end.line)
+        {
+            break;
+        }
+
+        if(line < slct.start.line)
+        {
             continue;
         }
 
-        if(line == slct.start.line && line == slct.end.line)
+
+        if(line >= slct.start.line && line <= slct.end.line)
         {
-            if(current_row == line_first_row){
-                idx_in_line = 0;
-            }
-            for (size_t j = 0; j< e->screen_cols; j++) {
-                if(idx_in_line == slct.start.idx){
-                    rectx = x;
-                }else if (idx_in_line == slct.end.idx){
-                    rectxend = x;
+            if(line == slct.start.line && line == slct.end.line)
+            {
+                if(current_row == line_first_row){
+                    idx_in_line = 0;
                 }
-                idx_in_line++;
-                x++;
+                for (size_t j = 0; j< e->screen_cols; j++) {
+                    if(idx_in_line == slct.start.idx){
+                        rectx = x;
+                    }else if (idx_in_line == slct.end.idx){
+                        rectxend = x;
+                    }
+                    idx_in_line++;
+                    x++;
+                }
+                if(rectxend < rectx){
+                    size_t tmp =  rectx;
+                    rectx = rectxend;
+                    rectxend = tmp;
+                }
+            }
+
+            else if(line == slct.start.line && line < slct.end.line)
+            {
+                if(current_row == line_first_row){
+                    idx_in_line = 0;
+                }
+                for (size_t j = 0; j< e->screen_cols; j++) {
+                    if(idx_in_line == slct.start.idx){
+                        rectx = x;
+                    }
+                    idx_in_line++;
+                    x++;
+                }
+            }
+
+            else if(line == slct.end.line && line > slct.start.line)
+            {
+                if(current_row == line_first_row){
+                    idx_in_line = 0;
+                }
+                for (size_t j = 0; j< e->screen_cols; j++) {
+                    if (idx_in_line == slct.end.idx){
+                        rectxend = x;
+                    }
+                    idx_in_line++;
+                    x++;
+                }
+            }
+            else{
+                if(current_row == line_first_row){
+                    idx_in_line = 0;
+                }
+                for (size_t j = 0; j< e->screen_cols; j++) {
+                    idx_in_line++;
+                    x++;
+                }
             }
             const SDL_Rect dst_rect = {
                 .x = (int) floorf((rectx + e->pad) * text->font->font_char_width * text->scale),
@@ -990,13 +1091,11 @@ void render_selection(editor_t *e, rendered_text_t *text)
                 .w = (int) floorf((rectxend-rectx) * text->font->font_char_width * text->scale),
                 .h = (int) floorf(text->font->font_char_height * text->scale),
             };
-            log_error(SDL_SetRenderDrawColor(text->font->renderer, 76,88,99,255));
+            log_error(SDL_SetRenderDrawColor(text->font->renderer, 62,68,81,255));
             log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
         }
-
     }
 }
-
 
 void render_line_number(editor_t *e, rendered_text_t *text)
 {
@@ -1151,7 +1250,8 @@ void render_n_text_file(editor_t *e, rendered_text_t *text)
     }
 }
 
-float lerp(float a, float b, float t){ 
+float lerp(float a, float b, float t)
+{ 
     return a + t * (b - a);
 }
 
@@ -1311,7 +1411,7 @@ void init_font_ttf(font_t *font)
     }
 }
 
-// TODO: Needs more work 
+// TODO: Needs more work, no idea how to proceed yet.
 void init_font_ttf_stb(font_t *font, float size)
 {
     SDL_RWops *rw = (SDL_RWops *) check_ptr(SDL_RWFromFile(font->path, "rb"));
