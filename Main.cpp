@@ -376,6 +376,7 @@ void append_text_to(editor_t *e, const char* text, size_t text_size, size_t line
 
 void text_buffer_backspace(editor_t *e)
 {
+    rescale = true;
     // current index in line
     size_t idx = get_index_in_line(e);
     // size of the entire line
@@ -397,6 +398,7 @@ void text_buffer_backspace(editor_t *e)
 
 void text_buffer_enter(editor_t *e)
 {
+    rescale = true;
     // current index in line
     size_t idx = get_index_in_line(e);
     // size of the entire line
@@ -408,7 +410,6 @@ void text_buffer_enter(editor_t *e)
     // delete current line
     e->l[e->curr_l].size=idx;
     e->l[e->curr_l].data[idx+1]='\0';
-
 }
 
 // Binary search to line from row
@@ -1351,7 +1352,7 @@ void init_font_image(font_t *font)
 void init_font_ttf(font_t *font)
 {
     TTF_Init();
-    TTF_Font* ttf_font = (TTF_Font*) check_ptr(TTF_OpenFont(font->path, 18));
+    TTF_Font* ttf_font = (TTF_Font*) check_ptr(TTF_OpenFont(font->path, 24));
 
     size_t size = ASCII_HIGH-ASCII_LOW+FONT_ROWS;
     char *ascii_chars  = (char *)malloc(sizeof(char)*size+1);
@@ -1516,12 +1517,12 @@ int main(int argv, char** args)
 
     font_t font = {
         .renderer = renderer,
-        .path = "./Font/charmap-oldschool_white_cropped.png",
-        // .path = "./Font/Ubuntu.ttf",
+        // .path = "./Font/charmap-oldschool_white_cropped.png",
+        .path = "./Font/SourceCodePro.ttf",
     };
 
-    init_font_image(&font);
-    // init_font_ttf(&font);
+    // init_font_image(&font);
+    init_font_ttf(&font);
     // init_font_ttf_stb(&font, 32);
 
     rendered_text_t text = {
