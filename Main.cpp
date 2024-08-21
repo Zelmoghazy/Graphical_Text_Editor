@@ -1,5 +1,6 @@
 
 // To Silence warnings from external libraries
+#include "external/include/SDL2/SDL_clipboard.h"
 #include "include/util.h"
 #include <corecrt.h>
 #include <immintrin.h>
@@ -57,27 +58,29 @@
 #define FONT_ROWS           6   
 #define FONT_COLS           18
 
+#define NUM_SIZES           16
+
 #define ASCII_LOW           32
 #define ASCII_HIGH          126
 
 
 typedef struct font_t{
     SDL_Renderer*    renderer;
-    SDL_Texture*     font_texture;
-    size_t           font_char_width;
-    size_t           font_char_height;
+    SDL_Texture*     font_texture[NUM_SIZES];
+    size_t           font_char_width[NUM_SIZES];
+    size_t           font_char_height[NUM_SIZES];
     const char*      path;                                                          // path of either font or image
-    SDL_Rect         glyph_table[ASCII_HIGH - ASCII_LOW + 1];
+    SDL_Rect         glyph_table[NUM_SIZES][ASCII_HIGH - ASCII_LOW + 1];
 }font_t;
 
 typedef struct rendered_text_t{
-    font_t*     font;
-    abuf*       text;                 
-    char        ch;               // Current character getting rendered.
-    vec2_t      pos;              // Rendering Position.
-    SDL_Color   color;            // Rendered text color.
-    float       scale;
-    SDL_Rect*   curs;             // later animate it.
+    font_t*          font;
+    char             ch;               // Current character getting rendered.
+    vec2_t           pos;              // Rendering Position.
+    SDL_Color        color;            // Rendered text color.
+    size_t           scale[NUM_SIZES];
+    size_t           curr_scale;
+    SDL_Rect*        curs;             // later animate it.
 }rendered_text_t;
 
 typedef struct cursor_t{
@@ -103,6 +106,7 @@ typedef struct editor_t{
     size_t      l_off;                   // first line currently scrolled to, start rendering from here
     cursor_t    curs;                    // cursor position
     size_t      pad;                     // padding to the left of the screen, where line number is.
+    size_t      status_bar;              // padding to the left of the screen, where line number is.
 }editor_t;
 
 typedef struct marker_t{
@@ -137,6 +141,8 @@ bool shift_press = false;
 // Animation
 float duration = 0.5f;
 Uint32 startTime ;
+
+char fps_buff[256];
 
 selection_t slct = {};
 
@@ -198,22 +204,34 @@ void set_screen_dimensions(editor_t *e , rendered_text_t *text)
     int w,h;
     SDL_Window *window = SDL_RenderGetWindow(text->font->renderer);
     SDL_GetWindowSize(window,&w,&h);
-    e->screen_rows  =  (size_t)floorf(((float)h / ((float)text->font->font_char_height * text->scale)));
-    e->screen_cols  =  (size_t)floorf(((float)w / ((float)text->font->font_char_width  * text->scale) - (float)e->pad));
+    e->screen_rows  =  (size_t)(h / (text->font->font_char_height[text->curr_scale]) - e->status_bar);
+    e->screen_cols  =  (size_t)(w / (text->font->font_char_width[text->curr_scale]) - e->pad);
+}
+
+void get_screen_dimensions(editor_t *e , rendered_text_t *text, int *w, int *h)
+{
+    //ZoneScoped;
+    SDL_Window *window = SDL_RenderGetWindow(text->font->renderer);
+    SDL_GetWindowSize(window,w,h);
+}
+
+inline size_t get_line_first_row(editor_t *e)
+{
+    return (e->l_off > 0) ? (e->l[e->l_off-1].end_row+1) : 0;
 }
 
 size_t get_first_screen_row(editor_t *e)
 {
     // first screen row is, first screen line row + row offset within this line  
-    size_t line_first_row = (e->l_off > 0) ? (e->l[e->l_off-1].end_row+1) : 0;
+    size_t line_first_row = get_line_first_row(e);
     return line_first_row + e->l[e->l_off].row_off;
 }
 
 size_t get_last_screen_row(editor_t *e)
 {
     //  last screen row is first screen row + screen rows
-    size_t line_first_row = (e->l_off > 0) ? (e->l[e->l_off-1].end_row+1) : 0;
-    return line_first_row + e->l[e->l_off].row_off + e->screen_rows;
+    size_t first_screen_row = get_first_screen_row(e);
+    return first_screen_row + e->screen_rows;
 }
 
 /*  ---------------- EDITOR --------------------------- */
@@ -232,7 +250,42 @@ void init_editor(rendered_text_t *text, editor_t *e)
     e->curs.x       =   0;
     e->curs.y       =   0;
 
-    e->pad          =   3;         
+    e->pad          =   3;
+    e->status_bar   =   1;         
+}
+
+
+/*
+    Initial idea, maybe add a small UI and check it.
+*/
+void editor_find(editor_t *e, const char *target)
+{
+    size_t saved_cursx = e->curs.x;
+    size_t saved_cursy = e->curs.y;
+    size_t saved_l_off = e->l_off;
+    size_t saved_row_off = e->l[e->curr_l].row_off;
+
+    for (size_t i = 0; i < e->l_num; i++) 
+    {
+        char *str = e->l[i].data;
+        char *match = strstr(str, target);
+        if(match)
+        {
+            // first row of current line
+            size_t line_first_row = (i > 0) ? (e->l[i-1].end_row+1) : 0;
+            // row we are currently at from the line rows
+            size_t offset = match - str;
+            size_t line_row = offset/e->screen_cols;
+            size_t line_col = offset%e->screen_cols;
+            // index = row*cols+col
+            e->curs.x = line_col;
+            e->curs.y = line_first_row + line_row;
+
+            e->l_off = i;
+            e->l->row_off = line_row;
+        }
+    
+    }
 }
 
 // Open a file inside the editor
@@ -316,11 +369,13 @@ void editor_to_file(editor_t *e, const char* path)
 void editor_scroll(editor_t *e)
 {
     //ZoneScoped;
+    
     // first row rendered on screen
     size_t first_screen_row = get_first_screen_row(e);
 
     // scroll up if cursor y position is smaller than first screen row 
-    if(e->curs.y < first_screen_row){
+    if(e->curs.y < first_screen_row)
+    {
         // scroll up remaining of wrapped line rows
         if(e->l[e->l_off].row_off > 0){
             e->l[e->l_off].row_off--;
@@ -328,20 +383,23 @@ void editor_scroll(editor_t *e)
             // scroll up a new line
             e->l_off--;
 
-            size_t line_first_row   = (e->l_off > 0) ? (e->l[e->l_off-1].end_row+1) : 0;
+            // new row offset is the last row of previous line
+            size_t line_first_row   = get_line_first_row(e);
             size_t rows_per_line    = e->l[e->l_off].end_row - line_first_row;
 
             // set line offset to last row of previous line
-            e->l[e->l_off].row_off        = rows_per_line;
+            e->l[e->l_off].row_off  = rows_per_line;
         }
     }
 
     // Upcoming row when we scroll down 
     size_t last_screen_row = get_last_screen_row(e);
 
-    if(e->curs.y >= last_screen_row){
-        size_t line_first_row        = (e->l_off > 0) ? (e->l[e->l_off-1].end_row+1) : 0;
-        size_t rows_per_line =       (e->l[e->l_off].end_row - line_first_row);
+    // scroll down if cursor y position is larger than last screen row
+    if(e->curs.y >= last_screen_row)
+    {
+        size_t line_first_row    = get_line_first_row(e);
+        size_t rows_per_line     = (e->l[e->l_off].end_row - line_first_row);
 
         // scroll down remaining of wrapped line rows
         if(e->l[e->l_off].row_off < rows_per_line){
@@ -415,13 +473,12 @@ void text_buffer_enter(editor_t *e)
 // Binary search to line from row
 size_t get_line_from_row(editor_t *e, size_t row) 
 {
-    size_t high = e->l_num - 1;
-    size_t low = 0;
+    size_t high = e->l_num-1;
+    size_t low  = 0;
     size_t mid;
     size_t item;
     size_t target = 0;
     
-
     if (e->l_num == 0){
         return 0;
     }
@@ -436,17 +493,15 @@ size_t get_line_from_row(editor_t *e, size_t row)
 
     while (low <= high) 
     {
-        mid = (low + high) / 2;
+        mid = low + (high-low) / 2;
 
-        item = (mid > 0) ? e->l[mid-1].end_row:0;
+        item = (mid > 0) ? e->l[mid-1].end_row+1:0;
 
         if (item > row) {
             high = mid - 1;
-        } else if (item < row) {
+        } else if (item <= row) {
             target = mid;
             low = mid + 1;
-        } else {
-            return mid-1;
         }
     }
     return target;
@@ -459,8 +514,8 @@ void update_current_line(editor_t *e)
 
 void editor_zoom_in(editor_t *e, rendered_text_t *text)
 {
-    if(text->scale < 15.0f){
-        text->scale+=0.5f;
+    if(text->curr_scale < NUM_SIZES){
+        text->curr_scale++;
         rescale = true;
         set_screen_dimensions(e,text);
         update_current_line(e);
@@ -473,8 +528,8 @@ void editor_zoom_in(editor_t *e, rendered_text_t *text)
 
 void editor_zoom_out(editor_t *e, rendered_text_t *text)
 {
-    if(text->scale >= 1.5f){
-        text->scale-=0.5f;
+    if(text->curr_scale > 0){
+        text->curr_scale--;
         rescale = true;
         set_screen_dimensions(e,text);
         update_current_line(e);
@@ -614,6 +669,15 @@ void move_cursor_page_down(editor_t *e)
     }
 }
 
+void reset_selection(void)
+{
+    selection = false;
+    slct.start.line = 0;
+    slct.start.idx = 0;
+    slct.end.line = 0;
+    slct.end.idx = 0;
+}
+
 /* ----------------  Events -------------------- */
 void poll_events(rendered_text_t *text, editor_t *e)
 {
@@ -623,7 +687,8 @@ void poll_events(rendered_text_t *text, editor_t *e)
     const Uint8 *keyboard_state_array = SDL_GetKeyboardState(NULL);
 
 
-    while (SDL_PollEvent(&event)) {
+    while (SDL_PollEvent(&event)) 
+    {
         switch (event.type) 
         {
             case SDL_QUIT:{
@@ -648,14 +713,11 @@ void poll_events(rendered_text_t *text, editor_t *e)
 
 
             case SDL_KEYDOWN:{
-                switch(event.key.keysym.sym){
+                switch(event.key.keysym.sym)
+                {
                     case SDLK_ESCAPE:
                         if(selection){
-                            selection = false;
-                            slct.start.line = 0;
-                            slct.start.idx = 0;
-                            slct.end.line = 0;
-                            slct.end.idx = 0;
+                            reset_selection();
                         }
                         break;
                     case SDLK_BACKSPACE:
@@ -677,11 +739,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                             slct.end.line = e->curr_l;
                             slct.end.idx = get_index_in_line(e);
                         }else{
-                            selection = false;
-                            slct.start.line = 0;
-                            slct.start.idx = 0;
-                            slct.end.line = 0;
-                            slct.end.idx = 0;
+                            reset_selection();
                         }
                         break;
 
@@ -691,11 +749,7 @@ void poll_events(rendered_text_t *text, editor_t *e)
                             slct.end.line = e->curr_l;
                             slct.end.idx = get_index_in_line(e);
                         }else{
-                            selection = false;
-                            slct.start.line = 0;
-                            slct.start.idx = 0;
-                            slct.end.line = 0;
-                            slct.end.idx = 0;
+                            reset_selection();
                         }
                         break;
                     case SDLK_UP:
@@ -719,6 +773,15 @@ void poll_events(rendered_text_t *text, editor_t *e)
                     case SDLK_END:{
                         e->curs.x = e->screen_cols;
                         snap_cursor(e);
+                    }break;
+
+                    case SDLK_TAB:{
+                        const char* spaces = "    ";
+                        insert_text_at(e,spaces,4);
+                        render_n_text_file(e,text);
+                        for(size_t i = 0; i < 4; i++){
+                            move_cursor_right(e);
+                        }
                     }break;
 
                     case SDLK_LSHIFT:
@@ -785,6 +848,14 @@ void poll_events(rendered_text_t *text, editor_t *e)
                 {
                     editor_to_file(e, "save_test.txt");
                 }
+                else if((keyboard_state_array[SDL_SCANCODE_LCTRL]) && (keyboard_state_array[SDL_SCANCODE_C]))
+                {
+                    SDL_SetClipboardText(e->l[e->curr_l].data);
+                }
+                else if((keyboard_state_array[SDL_SCANCODE_LCTRL]) && (keyboard_state_array[SDL_SCANCODE_V]))
+                {
+                    // char * SDL_GetClipboardText(void);
+                }
             }break;
 
             case SDL_KEYUP:{
@@ -808,8 +879,8 @@ void poll_events(rendered_text_t *text, editor_t *e)
 /* ----------------  Rendering -------------------- */
 void set_text_mode(rendered_text_t *text)
 {
-    log_error(SDL_SetTextureColorMod(text->font->font_texture, text->color.r, text->color.g, text->color.b));
-    log_error(SDL_SetTextureAlphaMod(text->font->font_texture,text->color.a));
+    log_error(SDL_SetTextureColorMod(text->font->font_texture[text->curr_scale], text->color.r, text->color.g, text->color.b));
+    log_error(SDL_SetTextureAlphaMod(text->font->font_texture[text->curr_scale],text->color.a));
 }
 
 SDL_Surface *surface_from_image(const char *path)
@@ -859,14 +930,14 @@ void render_char(editor_t *e, rendered_text_t *text)
     const size_t index = text->ch - ASCII_LOW; // ascii to index
 
     const SDL_Rect dst_rect = {
-        .x = (int) floorf((text->pos.x + e->pad) * text->font->font_char_width * text->scale),
-        .y = (int) floorf(text->pos.y * text->font->font_char_height * text->scale),
-        .w = (int) floorf(text->font->font_char_width * text->scale),
-        .h = (int) floorf(text->font->font_char_height * text->scale),
+        .x = (int)(text->pos.x + e->pad) * text->font->font_char_width[text->curr_scale],
+        .y = (int)text->pos.y * text->font->font_char_height[text->curr_scale],
+        .w = (int)text->font->font_char_width[text->curr_scale],
+        .h = (int)text->font->font_char_height[text->curr_scale],
     };
     {
         //ZoneScoped;
-        log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture, &(text->font->glyph_table[index]), &dst_rect));
+        log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture[text->curr_scale], &(text->font->glyph_table[text->curr_scale][index]), &dst_rect));
     }
 }
 
@@ -944,16 +1015,93 @@ void render_n_string(editor_t *e,rendered_text_t *text,char *string, size_t text
     }
 }
 
+void render_n_string_abs(editor_t *e, rendered_text_t *text,char *string,int x , int y)
+{
+    while (*string) {
+        //ZoneScoped;
+        if (*string < ASCII_LOW || *string > ASCII_HIGH){
+            if(*string != '\n'){
+                DEBUG_PRT("Unknown character!\n");
+                exit(1);
+            }
+        }
+        const size_t index = *string - ASCII_LOW; // ascii to index
+
+        const SDL_Rect dst_rect = {
+            .x = (int)x,
+            .y = (int)y,
+            .w = (int)text->font->font_char_width[text->curr_scale],
+            .h = (int)text->font->font_char_height[text->curr_scale],
+        };
+        //ZoneScoped;
+        log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture[text->curr_scale], &(text->font->glyph_table[text->curr_scale][index]), &dst_rect));
+        x+=text->font->font_char_width[text->curr_scale];
+
+        string++;
+    }
+}
+
 void render_seperator(editor_t *e, rendered_text_t *text)
 {
     const SDL_Rect dst_rect = (SDL_Rect) {
-        .x = (int) floorf(((e->pad-0.75f) * text->font->font_char_width * text->scale)),
-        .y = (int) floorf(0),
-        .w = (int) floorf((text->font->font_char_width * text->scale)/8),
-        .h = (int) floorf(text->font->font_char_height * text->scale * e->screen_rows),
+        .x = (int) ((e->pad-0.75f) * text->font->font_char_width[text->curr_scale]),
+        .y = (int) 0,
+        .w = (int) (text->font->font_char_width[text->curr_scale])/8,
+        .h = (int) (text->font->font_char_height[text->curr_scale] * (e->screen_rows+1)),
     };
     log_error(SDL_SetRenderDrawColor(text->font->renderer, 56,60,64,255));
     log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
+}
+
+void render_status_bar(editor_t *e, rendered_text_t *text)
+{
+    int w,h;
+    get_screen_dimensions(e, text, &w, &h);
+
+    const SDL_Rect dst_rect = (SDL_Rect) {
+        .x = 0,
+        .y = (int) (size_t)h-text->font->font_char_height[text->curr_scale]*e->status_bar,
+        .w = w,
+        .h = (int) (text->font->font_char_height[text->curr_scale]*e->status_bar),
+    };
+    log_error(SDL_SetRenderDrawColor(text->font->renderer, 45, 49, 57, 255));
+    log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
+
+    render_n_string_abs(e, text, "Test.txt",2, h-text->font->font_char_height[text->curr_scale]);
+}
+
+void render_debug_grid(editor_t *e, rendered_text_t *text)
+{
+    for(size_t row = 0 ; row <= e->screen_rows; row++)
+    {
+        const SDL_Rect dst_rect = (SDL_Rect) {
+            .x = 0,
+            .y = (int) row * text->font->font_char_height[text->curr_scale],
+            .w = (int) text->font->font_char_width[text->curr_scale]*(e->screen_cols+e->pad),
+            .h = (int) 1,
+        };
+        log_error(SDL_SetRenderDrawColor(text->font->renderer, 121,187,181,255));
+        log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
+
+        for(size_t col = 0 ; col <e->screen_cols; col++)
+        {
+            const SDL_Rect dst_rect = (SDL_Rect) {
+                .x = (col+e->pad) *  text->font->font_char_width[text->curr_scale],
+                .y = (int) 0,
+                .w = (int) 1,
+                .h = (int) text->font->font_char_height[text->curr_scale]*e->screen_rows,
+            };
+            log_error(SDL_SetRenderDrawColor(text->font->renderer, 121,187,181,255));
+            log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
+        }
+    }
+}
+
+void render_debug_fps(editor_t *e, rendered_text_t *text)
+{
+    text->pos.x = e->screen_cols-(strlen(fps_buff)+3);
+    text->pos.y = 1;
+    render_n_string(e, text, fps_buff, strlen(fps_buff));
 }
 
 void render_selection(editor_t *e, rendered_text_t *text)
@@ -1087,10 +1235,10 @@ void render_selection(editor_t *e, rendered_text_t *text)
                 }
             }
             const SDL_Rect dst_rect = {
-                .x = (int) floorf((rectx + e->pad) * text->font->font_char_width * text->scale),
-                .y = (int) floorf(y * text->font->font_char_height * text->scale),
-                .w = (int) floorf((rectxend-rectx) * text->font->font_char_width * text->scale),
-                .h = (int) floorf(text->font->font_char_height * text->scale),
+                .x = (int) ((rectx + e->pad) * text->font->font_char_width[text->curr_scale]),
+                .y = (int) (y * text->font->font_char_height[text->curr_scale]),
+                .w = (int) ((rectxend-rectx) * text->font->font_char_width[text->curr_scale]),
+                .h = (int) (text->font->font_char_height[text->curr_scale]),
             };
             log_error(SDL_SetRenderDrawColor(text->font->renderer, 62,68,81,255));
             log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
@@ -1102,28 +1250,22 @@ void render_line_number(editor_t *e, rendered_text_t *text)
 {
     //ZoneScoped;
 
-    size_t max_width =0;
-    size_t x = 0;
-    size_t y = 0;
-
-    size_t idx = (e->l_off > 0) ? e->l_off-1:0;
-    size_t screen_start_row;
-
-    if(e->l[idx].end_row == 0){
-        screen_start_row = (e->l[e->l_off].row_off);
-    }else{
-        screen_start_row = (e->l[idx].end_row+1) + (e->l[e->l_off].row_off);
-    }
+    size_t max_width = 0;
+    size_t x         = 0;
+    size_t y         = 0;
+   
+    size_t screen_start_row = get_first_screen_row(e);
     
-    for(size_t i = 0; i < e->screen_rows; i++)
+    for(size_t i = 0; i <= e->screen_rows; i++)
     {
-        x= 0;
-        y= i;
+        x = 0;
+        y = i;
+
         size_t current_row = screen_start_row+i;
-        size_t line = get_line_from_row(e, current_row);
-        if(e->l[line].end_row < current_row){
-            break;
-        }
+        size_t line        = get_line_from_row(e, current_row);
+        assert(line>=0 && line <= e->l_num);
+
+        // highlight current line
         if(line == e->curr_l){
             text->color.r = 132;
             text->color.g = 132;
@@ -1133,11 +1275,15 @@ void render_line_number(editor_t *e, rendered_text_t *text)
             text->color.g = 66;
             text->color.b = 66;
         }
+
         set_text_mode(text);
+
+        // skip same line rows
         size_t change = e->l[line].end_row-current_row;
-        i+= change;
+        i += change;
         
-        char number_str[21]; 
+        // convert line number to string
+        char number_str[64]; 
         // start from line 1
         sprintf(number_str, "%llu", line+1);
 
@@ -1146,20 +1292,30 @@ void render_line_number(editor_t *e, rendered_text_t *text)
             size_t index = number_str[j] - ASCII_LOW; // ascii to index
 
             const SDL_Rect dst_rect = {
-                .x = (int) floorf(x++ * text->font->font_char_width * text->scale),
-                .y = (int) floorf(y * text->font->font_char_height * text->scale),
-                .w = (int) floorf(text->font->font_char_width * text->scale),
-                .h = (int) floorf(text->font->font_char_height * text->scale),
+                .x = (int) (x++ * text->font->font_char_width[text->curr_scale]),
+                .y = (int) (y * text->font->font_char_height[text->curr_scale]),
+                .w = (int) (text->font->font_char_width[text->curr_scale]),
+                .h = (int) (text->font->font_char_height[text->curr_scale]),
             };
-            log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture, &(text->font->glyph_table[index]), &dst_rect));
+            log_error(SDL_RenderCopy(text->font->renderer, text->font->font_texture[text->curr_scale], &(text->font->glyph_table[text->curr_scale][index]), &dst_rect));
             max_width=MAX(max_width, j);
         }
+        if(line == e->l_num-1){
+            break;
+        }
     }
+
+    // revert text color
     text->color.r = 255;
     text->color.g = 255;
     text->color.b = 255;
+
     set_text_mode(text);
+
+    // set line number padding based on number width
     e->pad = max_width+2;
+
+    // render a vertical line to seperate the line number and text
     render_seperator(e, text);
 }
 
@@ -1194,8 +1350,12 @@ void render_n_text_file(editor_t *e, rendered_text_t *text)
         {
             // if length of text is larger than screen columns 
             while(len > e->screen_cols){
+                if (((text->pos.y >= e->screen_rows-1))){
+                    break;
+                }
                 // start rendering from not only line offset but also offset within current wrapped line
                 if(e->l[i].row_off > rows){
+                    // not visible won render
                     rows++;
                     len -= e->screen_cols;
                 }else{
@@ -1265,10 +1425,10 @@ void move_cursor_rect(editor_t *e, rendered_text_t *text)
     // cursor position on screen is cursor absolute position minus the offset
     size_t cursor_screen_pos = e->curs.y - (screen_row_start + e->l[e->l_off].row_off);
 
-    text->curs->x = (int) floorf(text->font->font_char_width  * text->scale *  (float)(e->curs.x + e->pad));  // x is same as we do text wrapping
-    text->curs->y = (int) floorf(text->font->font_char_height * text->scale * (float)cursor_screen_pos);
-    text->curs->w = (int) floorf((text->font->font_char_width * text->scale) / 4);
-    text->curs->h = (int) floorf(text->font->font_char_height * text->scale);
+    text->curs->x = (int) (text->font->font_char_width[text->curr_scale] * (e->curs.x + e->pad));  // x is same as we do text wrapping
+    text->curs->y = (int) (text->font->font_char_height[text->curr_scale] * cursor_screen_pos);
+    text->curs->w = (int) (text->font->font_char_width[text->curr_scale] / 4);
+    text->curs->h = (int) (text->font->font_char_height[text->curr_scale]);
 }
 
 void move_cursor_rect_animated(editor_t *e, rendered_text_t *text)
@@ -1303,10 +1463,10 @@ void move_cursor_rect_animated(editor_t *e, rendered_text_t *text)
     size_t cursor_screen_pos = e->curs.y - (screen_row_start + e->l[e->l_off].row_off);
 
 
-    text->curs->x = (int) floorf(lerp(text->curs->x,text->font->font_char_width* text->scale*(float)(e->curs.x + e->pad),t));  // x is same as we do text wrapping
-    text->curs->y = (int) floorf(lerp(text->curs->y,text->font->font_char_height * text->scale * (float)cursor_screen_pos,t));
-    text->curs->w = (int) floorf((text->font->font_char_width * text->scale) / 4);
-    text->curs->h = (int) floorf(text->font->font_char_height * text->scale);
+    text->curs->x = (int) (lerp(text->curs->x,text->font->font_char_width[text->curr_scale]*(e->curs.x + e->pad),t));  // x is same as we do text wrapping
+    text->curs->y = (int) (lerp(text->curs->y,text->font->font_char_height[text->curr_scale]*cursor_screen_pos,t));
+    text->curs->w = (int) ((text->font->font_char_width[text->curr_scale]) / 4);
+    text->curs->h = (int) (text->font->font_char_height[text->curr_scale]);
 }
 
 void render_cursor(editor_t *e, rendered_text_t *text)
@@ -1321,39 +1481,41 @@ void init_font_image(font_t *font)
 {
     SDL_Surface *font_surface = surface_from_image(font->path);
 
-    font->font_char_height =  (size_t)(font_surface->h/FONT_ROWS);
-    font->font_char_width  =  (size_t)(font_surface->w/FONT_COLS);
-    
     // remove black background
     SDL_SetColorKey(font_surface, SDL_TRUE, SDL_MapRGB(font_surface->format, 0x00, 0x00, 0x00));
 
-    font->font_texture = (SDL_Texture *)check_ptr(SDL_CreateTextureFromSurface(font->renderer, font_surface));
-
+    for (size_t scale = 0; scale < NUM_SIZES; scale++) 
+    {
+        font->font_char_height[scale] =  (size_t)(font_surface->h/FONT_ROWS) * (scale+1);
+        font->font_char_width[scale]  =  (size_t)(font_surface->w/FONT_COLS) * (scale+1);
+        font->font_texture[scale] = (SDL_Texture *)check_ptr(SDL_CreateTextureFromSurface(font->renderer, font_surface));
+    }
+    
     // not needed anymore
     stbi_image_free(font_surface->pixels);
     SDL_FreeSurface(font_surface);
 
-    // Precompute glyph table
-    for(size_t i = ASCII_LOW; i <= ASCII_HIGH; i++)
+    for (size_t scale = 0; scale < NUM_SIZES; scale++) 
     {
-        const size_t index  = i - ASCII_LOW;        // ascii to index
-        const size_t col    = index % FONT_COLS;
-        const size_t row    = index / FONT_COLS;
+        // Precompute glyph table
+        for(size_t i = ASCII_LOW; i <= ASCII_HIGH; i++)
+        {
+            const size_t index  = i - ASCII_LOW;        // ascii to index
+            const size_t col    = index % FONT_COLS;
+            const size_t row    = index / FONT_COLS;
 
-        font->glyph_table[index] = (SDL_Rect){
-            .x = (int)(col * font->font_char_width),
-            .y = (int)(row * font->font_char_height),
-            .w = (int)(font->font_char_width),
-            .h = (int)(font->font_char_height),
-        };
+            font->glyph_table[scale][index] = (SDL_Rect){
+                .x = (int)(col * font->font_char_width[0]),
+                .y = (int)(row * font->font_char_height[0]),
+                .w = (int)(font->font_char_width[0]),
+                .h = (int)(font->font_char_height[0]),
+            };
+        }
     }
 }
 
 void init_font_ttf(font_t *font)
 {
-    TTF_Init();
-    TTF_Font* ttf_font = (TTF_Font*) check_ptr(TTF_OpenFont(font->path, 24));
-
     size_t size = ASCII_HIGH-ASCII_LOW+FONT_ROWS;
     char *ascii_chars  = (char *)malloc(sizeof(char)*size+1);
     char ch = ASCII_LOW;
@@ -1371,6 +1533,7 @@ void init_font_ttf(font_t *font)
     }
     ascii_chars[size-1] = '\0';
 
+
     // const char ascii_chars[] =  " !\"#$%&\'()*+,-./01\n"
     //                             "23456789:;<=>?@ABC\n"
     //                             "DEFGHIJKLMNOPQRSTU\n"
@@ -1378,10 +1541,26 @@ void init_font_ttf(font_t *font)
     //                             "hijklmnopqrstuvwxy\n"
     //                             "z{|}~\n"
 
-    SDL_Surface* font_surface = TTF_RenderText_Blended_Wrapped(ttf_font, ascii_chars,COLOR_WHITE,0);
-    font->font_char_height    =  (size_t)(font_surface->h/FONT_ROWS);
-    font->font_char_width     =  (size_t)(font_surface->w/FONT_COLS);
-    font->font_texture        =  (SDL_Texture *)check_ptr(SDL_CreateTextureFromSurface(font->renderer, font_surface));
+
+
+    TTF_Init();
+
+    TTF_Font*    ttf_font       = NULL;
+    SDL_Surface* font_surface   = NULL;
+
+    // New texture for every size
+    for (size_t scale = 0; scale < NUM_SIZES; scale++) 
+    {
+        ttf_font     = (TTF_Font*) check_ptr(TTF_OpenFont(font->path, (int)(12+(scale*4))));
+        font_surface = TTF_RenderText_Blended_Wrapped(ttf_font, ascii_chars, COLOR_WHITE, 0);
+
+        font->font_char_height[scale]  =  (size_t)(font_surface->h/FONT_ROWS);
+        font->font_char_width[scale]   =  (size_t)(font_surface->w/FONT_COLS);
+        font->font_texture[scale]      =  (SDL_Texture *)check_ptr(SDL_CreateTextureFromSurface(font->renderer, font_surface));
+
+        SDL_FreeSurface(font_surface);
+        TTF_CloseFont(ttf_font); 
+    }
 
     // SDL_Rect texture_rect;
     // texture_rect.x = 0; //the x coordinate
@@ -1393,22 +1572,24 @@ void init_font_ttf(font_t *font)
     // SDL_RenderPresent(font->renderer); //updates the renderer
 
     free(ascii_chars);
-    SDL_FreeSurface(font_surface);
-    TTF_CloseFont(ttf_font); 
     TTF_Quit();
-    // precompute glyph table
-    for(size_t i = ASCII_LOW; i <= ASCII_HIGH; i++)
-    {
-        const size_t index  = i - ASCII_LOW; // ascii to index
-        const size_t col    = index % FONT_COLS;
-        const size_t row    = index / FONT_COLS;
 
-        font->glyph_table[index] = (SDL_Rect){
-            .x = (int)(col * font->font_char_width),
-            .y = (int)(row * font->font_char_height),
-            .w = (int)(font->font_char_width),
-            .h = (int)(font->font_char_height),
-        };
+    for (size_t scale = 0; scale < NUM_SIZES; scale++) 
+    {
+        // precompute glyph table for each size
+        for(size_t i = ASCII_LOW; i <= ASCII_HIGH; i++)
+        {
+            const size_t index  = i - ASCII_LOW;        // ascii to index
+            const size_t col    = index % FONT_COLS;
+            const size_t row    = index / FONT_COLS;
+
+            font->glyph_table[scale][index] = (SDL_Rect){
+                .x = (int)(col * font->font_char_width[scale]),
+                .y = (int)(row * font->font_char_height[scale]),
+                .w = (int)(font->font_char_width[scale]),
+                .h = (int)(font->font_char_height[scale]),
+            };
+        }
     }
 }
 
@@ -1508,12 +1689,11 @@ int main(int argv, char** args)
 
     SDL_Window*   window    = NULL;
     SDL_Renderer* renderer  = NULL;
-    SDL_Color     bg_color  = {.r=33,.g=33,.b=33,.a=255};
+    SDL_Color     bg_color  = {.r=30,.g=34,.b=42,.a=255};
     SDL_Rect      cursor    = {.x=0,.y=0,.w=0,.h=0};
 
     init_sdl(&window, &renderer);
 
-    abuf buffer = ABUF_INIT();
 
     font_t font = {
         .renderer = renderer,
@@ -1527,10 +1707,9 @@ int main(int argv, char** args)
 
     rendered_text_t text = {
         .font = &font,
-        .text = &buffer,
         .pos = {.x = 0, .y = 0},
         .color = COLOR_WHITE,
-        .scale = 1.0f,
+        .curr_scale = 0,
         .curs = &cursor,
     };
 
@@ -1541,6 +1720,7 @@ int main(int argv, char** args)
 
     startTime = SDL_GetTicks();
     
+
     while(running)
     {
         start = SDL_GetTicks();
@@ -1555,12 +1735,19 @@ int main(int argv, char** args)
         render_selection(&e, &text);
         render_n_text_file(&e,&text);
         render_line_number(&e,&text);
+        render_status_bar(&e,&text);
 
         render_cursor(&e, &text);
 
+        // render_debug_grid(&e,&text);
+        render_debug_fps(&e,&text);
+
         SDL_RenderPresent(renderer);
 
-        elapsedTime = SDL_GetTicks() - start;
+        elapsedTime = (SDL_GetTicks() - start)>0 ? (SDL_GetTicks() - start) : 1;
+
+        sprintf(fps_buff,"%d FPS",1000/elapsedTime);
+
         if(elapsedTime < FPS(60)){
             SDL_Delay(FPS(60)-elapsedTime);
         }
