@@ -1533,30 +1533,30 @@ void init_font_image(font_t *font)
 
 void init_font_ttf(font_t *font)
 {
-    size_t size = ASCII_HIGH-ASCII_LOW+FONT_ROWS;
-    char *ascii_chars  = (char *)malloc(sizeof(char)*size+1);
-    char ch = ASCII_LOW;
+    // size_t size = ASCII_HIGH-ASCII_LOW+FONT_ROWS;
+    // char *ascii_chars  = (char *)malloc(sizeof(char)*size+1);
+    // char ch = ASCII_LOW;
 
-    for (size_t row = 0; row < FONT_ROWS; row++)
-    {
-        for (size_t col = 0; col < FONT_COLS+1; col++)
-        {
-            if(col == FONT_COLS || (row * (FONT_COLS+1) + col) == size-2){
-                ascii_chars[row * (FONT_COLS+1) + col] = '\n';
-                break;
-            }
-            ascii_chars[row * (FONT_COLS+1) + col] = ch++;
-        }
-    }
-    ascii_chars[size-1] = '\0';
+    // for (size_t row = 0; row < FONT_ROWS; row++)
+    // {
+    //     for (size_t col = 0; col < FONT_COLS+1; col++)
+    //     {
+    //         if(col == FONT_COLS || (row * (FONT_COLS+1) + col) == size-2){
+    //             ascii_chars[row * (FONT_COLS+1) + col] = '\n';
+    //             break;
+    //         }
+    //         ascii_chars[row * (FONT_COLS+1) + col] = ch++;
+    //     }
+    // }
+    // ascii_chars[size-1] = '\0';
 
 
-    // const char ascii_chars[] =  " !\"#$%&\'()*+,-./01\n"
-    //                             "23456789:;<=>?@ABC\n"
-    //                             "DEFGHIJKLMNOPQRSTU\n"
-    //                             "VWXYZ[\\]^_`abcdefg\n"
-    //                             "hijklmnopqrstuvwxy\n"
-    //                             "z{|}~\n"
+    const char ascii_chars[] =  " !\"#$%&\'()*+,-./01\n"
+                                "23456789:;<=>?@ABC\n"
+                                "DEFGHIJKLMNOPQRSTU\n"
+                                "VWXYZ[\\]^_`abcdefg\n"
+                                "hijklmnopqrstuvwxy\n"
+                                "z{|}~\n";
 
 
 
@@ -1588,7 +1588,7 @@ void init_font_ttf(font_t *font)
     // SDL_RenderCopy(font->renderer, font->font_texture, NULL, &texture_rect); 
     // SDL_RenderPresent(font->renderer); //updates the renderer
 
-    free(ascii_chars);
+    // free(ascii_chars);
     TTF_Quit();
 
     for (size_t scale = 0; scale < NUM_SIZES; scale++) 
