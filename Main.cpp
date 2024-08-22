@@ -341,19 +341,20 @@ void editor_create_line(editor_t *e)
     // Expand lines array when we exceed capacity 
     if(e->l_num >= e->l_cap){
         e->l_cap*=2;
-        e->l = (line_t *)check_ptr(realloc(e->l,sizeof (line_t) * e->l_cap));
+        e->l = (line_t *)check_ptr(realloc(e->l,sizeof(line_t) * e->l_cap));
     }
-    memmove(&e->l[e->curr_l+2],&e->l[e->curr_l+1],sizeof(line_t) * (e->l_num - e->curr_l+1));
+    memmove(&e->l[e->curr_l+2],&e->l[e->curr_l+1],sizeof(line_t) * (e->l_num - (e->curr_l+1)));
 
     // reset line 
     size_t len = e->l[e->curr_l].size;
+
     // Populate line 
     e->l[e->curr_l+1].size = 0;
     e->l[e->curr_l+1].cap  = len+1;
     e->l[e->curr_l+1].data = (char *)check_ptr(malloc(sizeof(*(e->l[e->curr_l+1].data))*e->l[e->curr_l+1].cap));
     e->l[e->curr_l+1].data[0] = '\0';
     e->l[e->curr_l+1].row_off=0;
-    e->l[e->curr_l+1].end_row=0;
+    e->l[e->curr_l+1].end_row=e->curs.y+1;
 }
 
 void editor_to_file(editor_t *e, const char* path)
@@ -456,13 +457,14 @@ void text_buffer_backspace(editor_t *e)
 
 void text_buffer_enter(editor_t *e)
 {
-    rescale = true;
     // current index in line
     size_t idx = get_index_in_line(e);
+
     // size of the entire line
     size_t size = e->l[e->curr_l].size;
 
     editor_create_line(e);
+
     // append rest of line to the next line
     append_text_to(e, &e->l[e->curr_l].data[idx], size-idx, e->curr_l+1);
     // delete current line
@@ -1266,7 +1268,8 @@ void render_line_number(editor_t *e, rendered_text_t *text)
         assert(line>=0 && line <= e->l_num);
 
         // highlight current line
-        if(line == e->curr_l){
+        if(line == e->curr_l)
+        {
             text->color.r = 132;
             text->color.g = 132;
             text->color.b = 132;
@@ -1319,6 +1322,23 @@ void render_line_number(editor_t *e, rendered_text_t *text)
     render_seperator(e, text);
 }
 
+void render_highlight_row(editor_t *e, rendered_text_t *text)
+{
+    size_t first_screen_row = get_first_screen_row(e);
+
+    int w,h;
+    get_screen_dimensions(e, text, &w, &h);
+
+    const SDL_Rect dst_rect = (SDL_Rect) {
+        .x = (int) 0,
+        .y = (int) ((e->curs.y-first_screen_row) * text->font->font_char_height[text->curr_scale]),
+        .w = w,
+        .h = (int) (text->font->font_char_height[text->curr_scale]*e->status_bar),
+    };
+    log_error(SDL_SetRenderDrawColor(text->font->renderer, 26, 26, 26, 255));
+    log_error(SDL_RenderFillRect(text->font->renderer, &dst_rect));
+}
+
 // TODO : this does too much, it handles word wrapping and computing each line row end 
 // Find a way to seperate each functions
 void render_n_text_file(editor_t *e, rendered_text_t *text)
@@ -1350,9 +1370,6 @@ void render_n_text_file(editor_t *e, rendered_text_t *text)
         {
             // if length of text is larger than screen columns 
             while(len > e->screen_cols){
-                if (((text->pos.y >= e->screen_rows-1))){
-                    break;
-                }
                 // start rendering from not only line offset but also offset within current wrapped line
                 if(e->l[i].row_off > rows){
                     // not visible won render
@@ -1733,8 +1750,9 @@ int main(int argv, char** args)
         editor_scroll(&e);
 
         render_selection(&e, &text);
-        render_n_text_file(&e,&text);
+        render_highlight_row(&e, &text);
         render_line_number(&e,&text);
+        render_n_text_file(&e,&text);
         render_status_bar(&e,&text);
 
         render_cursor(&e, &text);
